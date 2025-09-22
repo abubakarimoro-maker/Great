@@ -14,18 +14,25 @@ import { fetchPrediction } from "@/api/predict";
 import { fallbackPredict } from "@/utils/fallback";
 import { showError, showSuccess } from "@/utils/toast";
 import { Loader2 } from "lucide-react";
+import { format } from "date-fns";
+import { nextDrawDate, filterDrawsBefore } from "@/utils/schedule";
 
 const Index = () => {
   const { settings, update, setSettings } = useSettings();
   const { byGame, addDraw } = useDraws();
 
   const gameDraws = byGame.get(settings.game) ?? [];
+  // Compute upcoming date for the selected game's weekday (weekly cadence)
+  const upcoming = React.useMemo(() => nextDrawDate(settings.game, new Date()), [settings.game]);
+  const upcomingISO = React.useMemo(() => format(upcoming, "yyyy-MM-dd"), [upcoming]);
+  // Only use draws that occurred before the upcoming draw date
+  const filteredDraws = React.useMemo(() => filterDrawsBefore(gameDraws, upcomingISO), [gameDraws, upcomingISO]);
   const [result, setResult] = React.useState<PredictResponse | null>(null);
   const [loading, setLoading] = React.useState(false);
 
   const buildPayload = (): PredictRequest => ({
     game: settings.game,
-    draws: gameDraws,
+    draws: filteredDraws,
     topK: settings.topK,
     temperature: settings.temperature,
     preferRecent: settings.preferRecent,
@@ -47,7 +54,7 @@ const Index = () => {
   };
 
   const generate = async () => {
-    if (!gameDraws.length) return;
+    if (!filteredDraws.length) return;
     setLoading(true);
     setResult(null);
     try {
@@ -62,7 +69,7 @@ const Index = () => {
       setResult({ numbers: nums, rationale: resp.rationale, pairs: resp.pairs });
       showSuccess("Prediction generated");
     } catch (e: any) {
-      const fb = fallbackPredict(settings.game, gameDraws, settings.topK, settings.preferRecent);
+      const fb = fallbackPredict(settings.game, filteredDraws, settings.topK, settings.preferRecent);
       setResult(fb);
       showError("DeepSeek unreachable. Used fallback generator.");
     } finally {
@@ -88,6 +95,9 @@ const Index = () => {
               </CardHeader>
               <CardContent className="space-y-5">
                 <MachinePicker value={settings.game} onChange={setGame} />
+                <div className="text-xs text-muted-foreground -mt-2">
+                  Next draw: <span className="font-medium">{format(upcoming, "EEEE, MMM d, yyyy")}</span>
+                </div>
                 <Controls
                   topK={settings.topK}
                   temperature={settings.temperature}
@@ -114,7 +124,7 @@ const Index = () => {
           {/* Right content */}
           <div className="flex-1">
             {result && (
-              <ResultsCard result={result} onRegenerate={regenerate} recentDraws={gameDraws} />
+              <ResultsCard result={result} onRegenerate={regenerate} recentDraws={filteredDraws} />
             )}
             <DrawsTable draws={gameDraws} />
           </div>
